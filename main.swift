@@ -66,33 +66,80 @@ func dismissUpdateNotification() {
         if let button = buttons.first {
             AXUIElementPerformAction(button, kAXPressAction as CFString)
             log("Clicked 'Remind Me Later'")
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            DispatchQueue.main.async {
+                delegate.lastTriggeredItem.title = "Last triggered: \(formatter.string(from: Date()))"
+            }
             return
         }
     }
 }
 
-func setupObserver() {
-    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.notificationcenterui").first else {
-        log("NotificationCenter process not found — retrying on next launch")
-        return
-    }
-    let pid = app.processIdentifier
-    let appElement = AXUIElementCreateApplication(pid)
-
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem!
     var observer: AXObserver?
-    let callback: AXObserverCallback = { _, _, _, _ in
+    var lastTriggeredItem: NSMenuItem!
+
+    func applicationDidFinishLaunching(_: Notification) {
+        checkAccessibility()
+        setupStatusBar()
         dismissUpdateNotification()
+        setupObserver()
     }
-    guard AXObserverCreate(pid, callback, &observer) == .success, let obs = observer else {
-        log("Failed to create AXObserver")
-        return
+
+    func setupStatusBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "bell.slash", accessibilityDescription: "NoUpdate")
+        }
+        let menu = NSMenu()
+
+        let titleItem = NSMenuItem()
+        let boldFont = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        titleItem.attributedTitle = NSAttributedString(string: "NoUpdate", attributes: [.font: boldFont])
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+
+        let descItem = NSMenuItem(title: "Dismisses macOS update notifications", action: nil, keyEquivalent: "")
+        descItem.isEnabled = false
+        menu.addItem(descItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        lastTriggeredItem = NSMenuItem(title: "Last triggered: Never", action: nil, keyEquivalent: "")
+        lastTriggeredItem.isEnabled = false
+        menu.addItem(lastTriggeredItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        statusItem.menu = menu
     }
-    AXObserverAddNotification(obs, appElement, kAXWindowCreatedNotification as CFString, nil)
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
-    log("Listening for notifications...")
+
+    func setupObserver() {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.notificationcenterui").first else {
+            log("NotificationCenter process not found — retrying on next launch")
+            return
+        }
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+
+        let callback: AXObserverCallback = { _, _, _, _ in
+            dismissUpdateNotification()
+        }
+        guard AXObserverCreate(pid, callback, &observer) == .success, let obs = observer else {
+            log("Failed to create AXObserver")
+            return
+        }
+        AXObserverAddNotification(obs, appElement, kAXWindowCreatedNotification as CFString, nil)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(obs), .defaultMode)
+        log("Listening for notifications...")
+    }
 }
 
-checkAccessibility()
-dismissUpdateNotification()
-setupObserver()
-CFRunLoopRun()
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
