@@ -6,10 +6,11 @@ let debugMode = CommandLine.arguments.contains("--debug")
 
 let watchedBundleIDs = [
     "com.apple.notificationcenterui",
-    "com.apple.NotificationCenter",
     "com.apple.SoftwareUpdateNotificationManager",
     "com.apple.UserNotificationCenter",
 ]
+
+let updateOnlyBundleID = "com.apple.SoftwareUpdateNotificationManager"
 
 func log(_ message: String) {
     let formatter = DateFormatter()
@@ -19,16 +20,6 @@ func log(_ message: String) {
 
 func debug(_ message: String) {
     if debugMode { log("[debug] \(message)") }
-}
-
-func checkAccessibility() {
-    if AXIsProcessTrusted() { return }
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    AXIsProcessTrustedWithOptions(options)
-    print("Accessibility permission required.")
-    print("Grant access in: System Settings > Privacy & Security > Accessibility")
-    print("Then re-run this tool.")
-    exit(1)
 }
 
 func getAXAttribute(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
@@ -60,7 +51,9 @@ func getAXValue(_ element: AXUIElement) -> String? {
 }
 
 let dismissTitles = ["later", "close", "not now", "remind", "dismiss", "cancel"]
-let updateKeywords = ["update", "available", "install", "restart", "tonight", "software"]
+let dangerTitles = ["install", "restart", "update", "upgrade", "download"]
+let updateAnchors = ["update", "upgrade"]
+let updateKeywords = ["update", "upgrade", "available", "install", "restart", "tonight", "software"]
 
 func collectAllText(_ element: AXUIElement, depth: Int = 0) -> String {
     if depth > 10 { return "" }
@@ -97,19 +90,32 @@ func collectAllButtons(_ element: AXUIElement, depth: Int = 0) -> [AXUIElement] 
 
 func findDismissButton(_ element: AXUIElement) -> AXUIElement? {
     let buttons = collectAllButtons(element)
-    if buttons.isEmpty { return nil }
     for button in buttons {
         let label = buttonLabel(button)
-        if !label.isEmpty, dismissTitles.contains(where: { label.contains($0) }) {
+        if label.isEmpty { continue }
+        if dangerTitles.contains(where: { label.contains($0) }) { continue }
+        if dismissTitles.contains(where: { label.contains($0) }) {
             return button
         }
     }
-    return buttons.last
+    debug("No dismiss button among: \(buttons.map(buttonLabel))")
+    return nil
 }
 
 func elementLooksLikeUpdateNotification(_ element: AXUIElement) -> Bool {
     let text = collectAllText(element).lowercased()
+    guard updateAnchors.contains(where: { text.contains($0) }) else { return false }
     return updateKeywords.filter { text.contains($0) }.count >= 2
+}
+
+let notificationSubroles = ["AXNotificationCenterBanner", "AXNotificationCenterAlert"]
+
+func collectNotificationElements(_ element: AXUIElement, depth: Int = 0) -> [AXUIElement] {
+    if depth > 10 { return [] }
+    if let subrole = getAXSubrole(element), notificationSubroles.contains(subrole) {
+        return [element]
+    }
+    return getAXChildren(element).flatMap { collectNotificationElements($0, depth: depth + 1) }
 }
 
 func dumpTree(_ element: AXUIElement, indent: Int = 0, maxDepth: Int = 8) {
@@ -132,15 +138,17 @@ func scanAndDismiss() -> Bool {
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
             let pid = app.processIdentifier
             let appElement = AXUIElementCreateApplication(pid)
+            _ = AXUIElementSetMessagingTimeout(appElement, 1.0)
             if debugMode {
                 debug("Scanning \(bundleID) (pid \(pid))")
                 dumpTree(appElement)
             }
-            let candidates: [AXUIElement] =
-                (getAXAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []) +
-                getAXChildren(appElement)
-            for el in candidates {
-                if tryDismissElement(el, context: bundleID) { return true }
+            for candidate in getAXChildren(appElement) {
+                let notifications = collectNotificationElements(candidate)
+                let targets = notifications.isEmpty ? [candidate] : notifications
+                for target in targets {
+                    if tryDismissElement(target, context: bundleID) { return true }
+                }
             }
         }
     }
@@ -148,32 +156,58 @@ func scanAndDismiss() -> Bool {
 }
 
 func tryDismissElement(_ element: AXUIElement, context: String) -> Bool {
-    if elementLooksLikeUpdateNotification(element) {
-        debug("Found update-related content in \(context)")
-        if let button = findDismissButton(element) {
-            let label = buttonLabel(button)
-            AXUIElementPerformAction(button, kAXPressAction as CFString)
-            log("Dismissed update notification (clicked '\(label.isEmpty ? "last button" : label)' in \(context))")
-            return true
-        }
-        debug("Found update text but no buttons in \(context)")
+    let isUpdate = context == updateOnlyBundleID || elementLooksLikeUpdateNotification(element)
+    guard isUpdate else { return false }
+    debug("Found update-related content in \(context)")
+    guard let button = findDismissButton(element) else {
+        debug("Found update text but no dismiss button in \(context)")
+        return false
     }
-    return false
+    let label = buttonLabel(button)
+    let err = AXUIElementPerformAction(button, kAXPressAction as CFString)
+    guard err == .success else {
+        debug("Press failed (AXError \(err.rawValue)) on '\(label)' in \(context)")
+        return false
+    }
+    log("Dismissed update notification (clicked '\(label)' in \(context))")
+    return true
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var pollTimer: Timer?
     var lastTriggeredItem: NSMenuItem!
+    let scanQueue = DispatchQueue(label: "com.local.NoUpdate.scan")
 
     func applicationDidFinishLaunching(_: Notification) {
-        checkAccessibility()
         setupStatusBar()
+        if AXIsProcessTrusted() {
+            startScanning()
+        } else {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+            log("Waiting for Accessibility permission (System Settings > Privacy & Security > Accessibility)...")
+            pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                if AXIsProcessTrusted() {
+                    self?.pollTimer?.invalidate()
+                    self?.startScanning()
+                }
+            }
+        }
+    }
+
+    func startScanning() {
         log("Scanning every \(Int(pollInterval))s for update notifications... (debug=\(debugMode))")
-        _ = scanAndDismiss()
+        runScan()
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            self?.runScan()
+        }
+    }
+
+    func runScan() {
+        scanQueue.async { [weak self] in
             if scanAndDismiss() {
-                self?.updateLastTriggered()
+                DispatchQueue.main.async { self?.updateLastTriggered() }
             }
         }
     }

@@ -20,3 +20,5 @@ Build:
 ```
 
 Move `NoUpdate.app` to `/Applications`, open it, and grant Accessibility access when prompted.
+
+Note: the build is ad-hoc signed, so after rebuilding you need to re-grant Accessibility access (remove and re-add the app in System Settings > Privacy & Security > Accessibility).
