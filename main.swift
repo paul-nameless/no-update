@@ -1,5 +1,6 @@
 import ApplicationServices
 import Cocoa
+import ServiceManagement
 
 let pollInterval: TimeInterval = 5
 let debugMode = CommandLine.arguments.contains("--debug")
@@ -180,6 +181,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let scanQueue = DispatchQueue(label: "com.local.NoUpdate.scan")
 
     func applicationDidFinishLaunching(_: Notification) {
+        if !UserDefaults.standard.bool(forKey: "launchAtLoginDisabled"),
+           SMAppService.mainApp.status != .enabled {
+            try? SMAppService.mainApp.register()
+        }
         setupStatusBar()
         if AXIsProcessTrusted() {
             startScanning()
@@ -244,8 +249,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
+    }
+
+    @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        if SMAppService.mainApp.status == .enabled {
+            try? SMAppService.mainApp.unregister()
+            UserDefaults.standard.set(true, forKey: "launchAtLoginDisabled")
+        } else {
+            try? SMAppService.mainApp.register()
+            UserDefaults.standard.set(false, forKey: "launchAtLoginDisabled")
+        }
+        sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 }
 
