@@ -52,7 +52,7 @@ func getAXValue(_ element: AXUIElement) -> String? {
 }
 
 let dismissTitles = ["later", "close", "not now", "remind", "dismiss", "cancel"]
-let dangerTitles = ["install", "restart", "update", "upgrade", "download"]
+let dangerTitles = ["install", "restart", "update", "upgrade", "download", "tonight"]
 let updateAnchors = ["update", "upgrade"]
 let updateKeywords = ["update", "upgrade", "available", "install", "restart", "tonight", "software"]
 
