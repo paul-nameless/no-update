@@ -22,6 +22,6 @@ Open the app and grant Accessibility access when prompted. It starts scanning as
 ./build.sh
 ```
 
-Then move `NoUpdate.app` to `/Applications`.
+Then move `NoUpdate.app` to `~/Applications`.
 
 Note: source builds are ad-hoc signed, so after each rebuild you need to re-grant Accessibility access (remove and re-add the app in System Settings > Privacy & Security > Accessibility).
