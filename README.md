@@ -4,6 +4,8 @@ Tired of macOS constantly asking you to update? NoUpdate is a tiny menu bar app 
 
 No settings, no config. Just runs in the background and stays out of your way.
 
+![NoUpdate menu](screenshot.png)
+
 
 ## Requirements
 
@@ -24,4 +26,4 @@ Open the app and grant Accessibility access when prompted. It starts scanning as
 
 Then move `NoUpdate.app` to `~/Applications`.
 
-Note: source builds are ad-hoc signed, so after each rebuild you need to re-grant Accessibility access (remove and re-add the app in System Settings > Privacy & Security > Accessibility).
+Note: source builds are ad-hoc signed, so after each rebuild you need to re-grant Accessibility access (remove and re-add the app in System Settings > Privacy & Security > Accessibility). If you have a signing certificate, set `SIGN_ID="your identity" ./build.sh` to keep the grant across rebuilds.
