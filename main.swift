@@ -4,6 +4,7 @@ import ServiceManagement
 
 let pollInterval: TimeInterval = 5
 let debugMode = CommandLine.arguments.contains("--debug")
+setvbuf(stdout, nil, _IOLBF, 0)
 
 let watchedBundleIDs = [
     "com.apple.notificationcenterui",
@@ -59,6 +60,7 @@ let updateKeywords = ["update", "upgrade", "available", "install", "restart", "t
 func collectAllText(_ element: AXUIElement, depth: Int = 0) -> String {
     if depth > 10 { return "" }
     var text = (getAXTitle(element) ?? "") + " " + (getAXValue(element) ?? "")
+        + " " + (getAXDescription(element) ?? "")
     for child in getAXChildren(element) {
         text += " " + collectAllText(child, depth: depth + 1)
     }
@@ -145,6 +147,7 @@ func scanAndDismiss() -> Bool {
                 dumpTree(appElement)
             }
             for candidate in getAXChildren(appElement) {
+                if getAXRole(candidate) == kAXMenuBarRole as String { continue }
                 let notifications = collectNotificationElements(candidate)
                 let targets = notifications.isEmpty ? [candidate] : notifications
                 for target in targets {
